@@ -1,0 +1,8 @@
+{
+  "kobby_base": "https://<KOBBY_SERVER>",
+  "watcher_base": "https://tg-watcher.164-68-127-58.sslip.io",
+  "public_base": "https://<BRIDGE_SERVER>",
+  "data_dir": ".local/state",
+  "key_file": ".local/master.key",
+  "poll_interval": 60
+}

@@ -1,0 +1,31 @@
+name: kobby-telegram-bot
+services:
+  bridge:
+    build: .
+    image: kobby-telegram-bot:1.0.0
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    volumes:
+      - ./runtime/data:/data
+      - ./runtime/secrets:/secrets:ro
+      - ./runtime/config.json:/config/config.json:ro
+    networks:
+      proxy:
+        aliases: [kobby-tlg-bridge]
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 64
+    stop_grace_period: 160s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+networks:
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:-tg-watcher_default}

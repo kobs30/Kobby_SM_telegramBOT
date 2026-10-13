@@ -1,0 +1,11 @@
+.local/
+.env
+data/
+secrets/
+*.session
+*.session-journal
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+runtime/
