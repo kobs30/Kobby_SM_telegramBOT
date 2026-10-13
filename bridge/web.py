@@ -7,7 +7,7 @@ import threading
 import time
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from bridge.api import API
@@ -39,6 +39,7 @@ def create_app(config=None, bridge=None, *, worker=True):
             if bridge is None and not thread.is_alive():
                 instance.kobby.client.close()
                 instance.watcher.client.close()
+                instance.previews.close()
                 instance.store.close()
 
     app = FastAPI(title='Kobby Telegram Bridge', lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -56,7 +57,7 @@ def create_app(config=None, bridge=None, *, worker=True):
                 return Response(status_code=429, headers={'Retry-After': '60'})
             bucket.append(now)
         response = await call_next(request)
-        response.headers['Cache-Control'] = 'no-store'
+        response.headers.setdefault('Cache-Control', 'no-store')
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['Referrer-Policy'] = 'no-referrer'
         response.headers['Content-Security-Policy'] = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"
@@ -97,6 +98,14 @@ def create_app(config=None, bridge=None, *, worker=True):
         status = await run_in_threadpool(app.state.bridge.telegram, channel_id, dict(request.headers), raw)
         return Response(status_code=status)
 
+    @app.api_route('/media/{name}', methods=['GET', 'HEAD'])
+    def photo(name: str):
+        path = app.state.bridge.previews.path(name)
+        if path is None:
+            return Response(status_code=404)
+        return FileResponse(path, headers={'Access-Control-Allow-Origin': '*',
+                                          'Cache-Control': 'public, max-age=3600, immutable'})
+
     @app.get('/', response_class=HTMLResponse)
     def index():
         return page('Telegram → Kobby', '<p>Добавьте бота в Kobby с адресом этого сервиса, '
@@ -121,7 +130,8 @@ def create_app(config=None, bridge=None, *, worker=True):
                     '<li>Вставьте URL, включите автоматическое подключение и «Вступать в сообщества».</li>'
                     '<li>Сохраните и дождитесь статуса «Сервис подключён». Канал появится после синхронизации.</li></ol>' +
                     details + '<p>Состояние канала на этой странице общее. Ваша подписка подтверждается в Kobby.</p>' +
-                    '<p>Переносим новые тексты и ссылки. Медиа доступны в Telegram. '
+                    '<p>Переносим новые посты с Markdown и фото из публичных превью. '
+                    'В Kobby фото открывается кнопкой «Загрузить картинку». Видео и файлы пока не переносятся. '
                     'Источник хранит только пять последних постов: длительный простой может привести к пропускам.</p>')
 
     return app

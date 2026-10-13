@@ -77,3 +77,26 @@ After deploying the update on the same date:
   validation channel, which was then deleted.
 - Public HTTPS health returned 200. Only the bridge container was recreated;
   all nine other containers retained their IDs and start timestamps.
+
+## Markdown and public-photo update
+
+Validated locally on 2026-10-13:
+
+- All 33 offline tests passed, including Telegram UTF-16 offsets, nested styles,
+  escaped literal Markdown, safe links, balanced splits, and removal of generated
+  attribution. Parts also limit line counts to avoid excessive Kobby render nodes.
+- Public-preview fixtures select the exact photo within an album and reject
+  avatars, neighbours, video thumbnails, unsupported hosts, redirects, invalid
+  images, oversized downloads, and paths outside the cache.
+- Photo preparation survives restart; later posts wait for earlier photo jobs.
+  A lost Kobby response reuses the same prepared Markdown and cached image URL.
+- HTTP 429 cooldown survives restart. Cache capacity, three-day expiry, pending
+  publication protection, expiry after publication, MIME and public CORS are tested.
+- A real public preview of `alexavni/163010` yielded one verified 75,483-byte JPEG
+  without any Telegram account credentials. This read-only check did not publish
+  an old Telegram post into a shared mirror.
+
+Live acceptance can pass `--image-url https://<BRIDGE_SERVER>/media/<digest>.jpg`
+to verify image fetching, CORS, and a Markdown publication containing that image
+in its isolated disposable channel. Kobby's existing client requires an explicit
+click to load Markdown images; the bridge does not change that client behavior.

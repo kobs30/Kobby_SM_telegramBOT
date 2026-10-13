@@ -10,6 +10,7 @@ import uuid
 
 from bridge.api import APIError, Publisher
 from bridge.render import USERNAME, render
+from bridge.preview import PreviewCache, wants_photo
 
 log = logging.getLogger('bridge')
 HEX32 = re.compile('[0-9a-f]{32}\\Z')
@@ -28,7 +29,7 @@ def timestamp_ok(stamp):
 
 
 class Bridge:
-    def __init__(self, config, store, kobby, watcher):
+    def __init__(self, config, store, kobby, watcher, previews=None):
         self.config, self.store, self.kobby, self.watcher = config, store, kobby, watcher
         self.publisher = Publisher(store, kobby)
         self.work_lock = threading.Lock()
@@ -36,6 +37,9 @@ class Bridge:
         self.last_tick = time.time()
         self.worker_error = ''
         self.publisher_retry_at = 0
+        self.previews = previews or PreviewCache(store, config['public_base'],
+                                                max_cache_bytes=config.get('media_cache_bytes', 1024 ** 3),
+                                                retention_seconds=config.get('media_retention_days', 3) * 86400)
         store.bind('kobby_base', config['kobby_base'])
         store.bind('watcher_base', config['watcher_base'])
 
@@ -215,9 +219,40 @@ class Bridge:
             if old:
                 return
             db.execute('INSERT INTO posts VALUES(?,?,?)', (source['id'], mid, json.dumps(message, ensure_ascii=False)))
-            for part, body in enumerate(bodies, 1):
-                db.execute('INSERT INTO outbox(source_id,message_id,part,body) VALUES(?,?,?,?)', (source['id'], mid, part, body))
+            if wants_photo(message):
+                db.execute('INSERT INTO preparations(source_id,message_id) VALUES(?,?)', (source['id'], mid))
+            else:
+                for part, body in enumerate(bodies, 1):
+                    db.execute('INSERT INTO outbox(source_id,message_id,part,body) VALUES(?,?,?,?)', (source['id'], mid, part, body))
             db.execute('UPDATE sources SET cursor=MAX(cursor,?) WHERE id=?', (mid, source['id']))
+
+    def prepare_photo(self, job):
+        source = self.store.one('SELECT * FROM sources WHERE id=?', (job['source_id'],))
+        message = json.loads(job['body'])
+        error_code = ''
+        try:
+            images = self.previews.prepare(source, message)
+            if not images:
+                error_code = 'preview_photo_unavailable'
+        except APIError as error:
+            if error.status == 429 or (error.status >= 500 and job['attempts'] < 2):
+                self.store.execute('UPDATE preparations SET attempts=attempts+1,next_at=?,error=? '
+                                   'WHERE source_id=? AND message_id=?',
+                                   (self.backoff(job['attempts'], error), error.code, source['id'], message['id']))
+                return
+            images, error_code = [], error.code
+        account = self.store.secret('publisher')
+        bodies = render(source, message, account['username'], self.config['kobby_base'], images)
+        # No request can be sent until all final contents and IDs are committed.
+        with self.store.transaction() as db:
+            for part, body in enumerate(bodies, 1):
+                db.execute('INSERT INTO outbox(source_id,message_id,part,body) VALUES(?,?,?,?)',
+                           (source['id'], message['id'], part, body))
+            for url in images:
+                db.execute('INSERT INTO media_refs(source_id,message_id,name) VALUES(?,?,?)',
+                           (source['id'], message['id'], url.rsplit('/', 1)[1]))
+            db.execute("UPDATE preparations SET state='done',error=? WHERE source_id=? AND message_id=?",
+                       (error_code, source['id'], message['id']))
 
     def telegram(self, channel_id, headers, raw):
         source = self.store.one('SELECT * FROM sources WHERE id=?', (channel_id,))
@@ -257,6 +292,7 @@ class Bridge:
             return
         try:
             now = time.time()
+            self.previews.prune(now)
             for row in self.store.rows("SELECT * FROM connections WHERE state IN ('pending','retrying') AND next_at<=? LIMIT 4", (now,)):
                 try:
                     self.connect_job(row)
@@ -271,6 +307,11 @@ class Bridge:
                 except APIError as error:
                     delay = max(0, error.retry_after - self.config.get('poll_interval', 60))
                     self.store.execute('UPDATE sources SET error=?,last_poll=? WHERE id=?', (error.code, now + delay, source['id']))
+            for job in self.store.rows('''SELECT p.*,m.body FROM preparations p
+                    JOIN posts m USING(source_id,message_id) JOIN sources s ON s.id=p.source_id
+                    WHERE p.state='pending' AND p.next_at<=? AND s.state='ready'
+                    ORDER BY p.next_at,p.source_id,p.message_id LIMIT 1''', (now,)):
+                self.prepare_photo(job)
             if now < self.publisher_retry_at:
                 return
             # One earliest unfinished part per source. Other sources can progress
@@ -280,6 +321,8 @@ class Bridge:
                 AND NOT EXISTS(SELECT 1 FROM outbox earlier WHERE earlier.source_id=o.source_id
                     AND earlier.state!='sent' AND (earlier.message_id<o.message_id
                     OR (earlier.message_id=o.message_id AND earlier.part<o.part)))
+                AND NOT EXISTS(SELECT 1 FROM preparations p WHERE p.source_id=o.source_id
+                    AND p.state='pending' AND p.message_id<=o.message_id)
                 ORDER BY o.id LIMIT 16''', (now,))
             for job in jobs:
                 try:
@@ -288,7 +331,10 @@ class Bridge:
                     message = result.get('message', {})
                     if any(message.get(k) != expected[k] for k in ('chat_id', 'sender_id', 'recipient_id', 'client_message_id', 'content')):
                         raise APIError(502, 'invalid_publication_response')
-                    self.store.execute("UPDATE outbox SET state='sent',error='' WHERE id=?", (job['id'],))
+                    with self.store.transaction() as db:
+                        db.execute("UPDATE outbox SET state='sent',error='' WHERE id=?", (job['id'],))
+                        db.execute('UPDATE media_refs SET keep_until=? WHERE source_id=? AND message_id=?',
+                                   (time.time() + self.previews.retention_seconds, job['source_id'], job['message_id']))
                 except APIError as error:
                     state = 'pending' if error.status in (401, 429) or error.status >= 500 else 'failed'
                     self.store.execute('UPDATE outbox SET state=?,error=?,attempts=attempts+1,next_at=? WHERE id=?',

@@ -56,6 +56,17 @@ class Store:
                 body TEXT NOT NULL, PRIMARY KEY(source_id,message_id));
             CREATE TABLE IF NOT EXISTS inbox(
                 event_id TEXT PRIMARY KEY, source_id INTEGER NOT NULL, message_id INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS preparations(
+                source_id INTEGER NOT NULL, message_id INTEGER NOT NULL,
+                state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
+                next_at REAL NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY(source_id,message_id),
+                FOREIGN KEY(source_id,message_id) REFERENCES posts(source_id,message_id));
+            CREATE TABLE IF NOT EXISTS media_refs(
+                source_id INTEGER NOT NULL, message_id INTEGER NOT NULL, name TEXT NOT NULL,
+                keep_until REAL NOT NULL DEFAULT 0,
+                PRIMARY KEY(source_id,message_id,name),
+                FOREIGN KEY(source_id,message_id) REFERENCES posts(source_id,message_id));
             CREATE TABLE IF NOT EXISTS outbox(
                 id INTEGER PRIMARY KEY, source_id INTEGER NOT NULL REFERENCES sources(id),
                 message_id INTEGER NOT NULL, part INTEGER NOT NULL, body TEXT NOT NULL,

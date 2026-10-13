@@ -5,7 +5,6 @@ source, and create/delete an isolated validation channel. Credentials remain in
 the specified encrypted local store. No secret or post body is printed.
 """
 import argparse
-import base64
 import json
 import time
 import uuid
@@ -13,6 +12,7 @@ import uuid
 from bridge.api import API, APIError, Publisher
 from bridge.cli import load_config, provision
 from bridge.storage import Store
+from bridge.render import render
 
 
 def main():
@@ -22,6 +22,7 @@ def main():
     parser.add_argument('--source', default='alexavni')
     parser.add_argument('--extra-permission', action='append', default=[],
                         help='Additional grant to test alongside communities.join; repeatable')
+    parser.add_argument('--image-url', help='Optional cached public image URL to verify and include in the isolated Markdown post')
     args = parser.parse_args()
     config = load_config(args.config)
     api = API(config['kobby_base'])
@@ -64,17 +65,33 @@ def main():
         test.put_secret('validation_channel_id',channel_id)
         publisher.request('POST','/api/v1/communities/create',
                           {'id':channel_id,'type':'channel','title':'Telegram bridge API validation','description':'Temporary automated acceptance check'})
-        request = {'chat_id':channel_id,'sender_id':account['username'],'recipient_id':'community:'+channel_id,
-                   'client_message_id':'validation_'+channel_id,
-                   'content':{'version':1,'content_type':'text/plain; charset=utf-8',
-                              'body':base64.b64encode(b'Isolated bridge publication validation.').decode(),'transforms':[]}}
+        images = []
+        if args.image_url:
+            if not args.image_url.startswith(config['public_base'] + '/media/'):
+                raise RuntimeError('Expected an image hosted by this bridge')
+            import httpx
+            with httpx.Client(follow_redirects=False, trust_env=False, timeout=15) as client:
+                response = client.get(args.image_url, headers={'Origin': config['kobby_base']})
+                response.raise_for_status()
+                if response.headers.get('access-control-allow-origin') != '*':
+                    raise RuntimeError('Cached image is not accessible to Kobby web')
+                import io
+                from PIL import Image
+                with Image.open(io.BytesIO(response.content)) as photo:
+                    photo.verify()
+            images.append(args.image_url)
+        request = json.loads(render({'id': 1, 'username': args.source, 'channel_id': channel_id},
+                                    {'id': 1, 'text': 'Isolated Markdown validation.',
+                                     'entities': [{'_': 'MessageEntityBold', 'offset': 0, 'length': 8}]},
+                                    account['username'], config['kobby_base'], images)[0])
+        request['client_message_id'] = 'validation_' + channel_id
         first = publisher.request('POST','/api/v1/messages',request)
         second = publisher.request('POST','/api/v1/messages',request)
         if not second.get('duplicate') or first['message']['id'] != second['message']['id']:
             raise RuntimeError('Publication retry did not deduplicate')
         if first['message']['content'] != request['content']:
             raise RuntimeError('Unexpected content response normalization')
-        print(json.dumps({'step':'publication_and_duplicate_verified'}),flush=True)
+        print(json.dumps({'step':'markdown_publication_and_duplicate_verified', 'image_verified':bool(images)}),flush=True)
     finally:
         # Cleanup is scoped to resources created by this acceptance test.
         publisher.request('POST','/api/v1/bots/delete',{'id':bot_id})

@@ -75,11 +75,15 @@ to the watcher; a prepared publication must never be rewritten during a retry.
 | `connections` | Current subscriber bot, owner, source, join state and retries |
 | `sources` | Stable source ID, baseline, cursor, mirror ID and creation request |
 | `posts` | First accepted snapshot, unique by source and message ID |
+| `preparations` | Durable photo preparation, retry state and fallback errors |
+| `media_refs` | Cached photos referenced by posts, protected while unsent, publication expiry |
 | `inbox` | Webhook event identity deduplication |
 | `outbox` | Immutable prepared request per source, message and part |
 
-Post snapshot, deduplication entry, publication requests, and cursor update commit
-together. Events are acknowledged only after commit. Polling revisits the retained
+Post snapshot, deduplication entry, and cursor update commit together with either
+publication requests or a durable photo-preparation job. Events are acknowledged
+only after commit; no public preview download occurs in a webhook handler.
+Polling revisits the retained
 window above the original baseline, so a later webhook does not hide an earlier
 out-of-order message. A source cursor is an observation watermark, not proof that
 all Telegram history has been recovered.
@@ -87,10 +91,47 @@ all Telegram history has been recovered.
 ## Publication and failures
 
 `POST /api/v1/messages` uses the publisher's user session with the mirror chat ID,
-`recipient_id=community:<id>`, plain UTF-8 text encoded in standard base64, and a
+`recipient_id=community:<id>`, Markdown UTF-8 text encoded in standard base64, and a
 stable ID derived from server, source, message ID, and part number. The full request
 is saved before sending. An identical server duplicate completes the same job.
 Each source sends its earliest known unfinished part before later queued parts.
+Pending photo preparation also blocks later known posts from overtaking it.
+Existing prepared requests from older versions are never rewritten on upgrade.
+
+Telegram entity offsets are interpreted as UTF-16 code units. Formatting is
+regenerated at every split boundary so parts have balanced Markdown. Literal
+Markdown punctuation is escaped, and unsupported entities fall back to readable
+text. Generated attribution headings and original-post footers are omitted.
+
+## Public photo previews
+
+Only messages marked as Telegram photos schedule preview work. The adapter reads
+`https://t.me/<username>/<message_id>?embed=1&mode=tme` and selects the photo anchor
+whose post URL matches that exact message. It excludes avatars, reply pictures,
+video posters, and other album members. Only HTTPS `cdn<number>.telesco.pe` image
+hosts on port 443 are accepted; redirects are not followed. Missing or changed
+markup falls back to a photo-unavailable notice after preserving the caption.
+
+Downloads are sequential, spaced by two seconds, capped at 1 MiB for HTML and
+4 MiB for images, with request/stream timeouts. Only verified PNG/JPEG/WebP files
+within Kobby's 16-million-pixel and 8192-pixel-side bounds are cached. Each file
+is atomically saved under its SHA-256 filename before final publication requests
+and media references are committed. Publication retries reuse those same bytes,
+URLs, IDs and content. Readers use the bridge's `/media/<digest>.<ext>` endpoint
+with public CORS, so they do not make repeated Telegram downloads.
+
+The cache cap defaults to 1 GiB. Hourly cleanup removes photos after the default
+three-day lifetime. Pending/failed outbox references protect their files. Each
+successful send transaction extends the photo's retention to three days after
+publication. Once expired, photos return 404 while Markdown text remains stored
+in Kobby. A full cache produces text fallback without deleting protected photos.
+
+HTTP 429 persists a global preview cooldown and respects `Retry-After`; network
+and server errors receive up to three attempts before text fallback. Watcher
+code, credentials and Telegram sessions are not changed or shared with this
+adapter. Public preview availability and HTML stability are external limitations.
+
+## Authorization failures
 
 Network/5xx errors use backoff; 429 respects `Retry-After`. Publisher 401 triggers
 password login, validates the returned identity, and repeats the original request.

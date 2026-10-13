@@ -94,6 +94,24 @@ Bot settings changes and rotation provide new credentials automatically.
 
 ## Backup, credentials and recovery
 
+Photo cache settings are `media_retention_days` (default `3`) and
+`media_cache_bytes` (default `1073741824`, 1 GiB). Old configuration files inherit
+these defaults. Photos live under `/data/media` in the existing persistent data
+mount; no new port, proxy rule, watcher restart, or Telegram login is required.
+Cleanup runs hourly. Photos referenced by unfinished publications are protected;
+after successful sending they receive a fresh retention period. Expired URLs
+return 404, including in old Kobby posts. Browser copies may remain cached for up
+to one hour. To keep photos for a week, set `media_retention_days` to `7` and
+recreate only the bridge container; this cannot restore already deleted files.
+
+At the cache cap, new posts keep their captions and show a photo-unavailable
+notice; existing protected files are retained. CLI `status` includes preparation
+errors such as `preview_cache_full`, `preview_rate_limited`, and
+`preview_photo_unavailable`. HTTP 429 pauses all public-preview downloads for the
+requested interval. No automatic cleanup removes post text or delivery IDs.
+The 1 GiB cap covers photo files; the SQLite database and other services still
+need separate disk monitoring and backups.
+
 Stop only the bridge, copy its complete data directory and master key to encrypted
 backup storage, then start it again. Preserve ownership and permissions. The key
 must be recoverable but access-controlled separately from routine database backups.

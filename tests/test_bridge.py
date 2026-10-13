@@ -101,7 +101,7 @@ class Watcher:
         raise AssertionError(path)
 
 
-class BridgeTest(unittest.TestCase):
+class BridgeFixture(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.store = Store(self.tmp.name, create_key=True)
@@ -114,6 +114,7 @@ class BridgeTest(unittest.TestCase):
         self.bridge = Bridge(self.config, self.store, self.kobby, self.watcher)
 
     def tearDown(self):
+        self.bridge.previews.close()
         self.store.close()
         self.tmp.cleanup()
 
@@ -147,6 +148,7 @@ class BridgeTest(unittest.TestCase):
                 'x-webhook-signature':signature('w'*40, stamp, raw)}, raw
 
     def restart(self):
+        self.bridge.previews.close()
         self.store.close()
         self.store = Store(self.tmp.name)
         self.bridge = Bridge(self.config, self.store, self.kobby, self.watcher)
@@ -154,7 +156,10 @@ class BridgeTest(unittest.TestCase):
     def make_due(self):
         self.store.execute('UPDATE connections SET next_at=0')
         self.store.execute('UPDATE outbox SET next_at=0')
+        self.store.execute('UPDATE preparations SET next_at=0')
 
+
+class BridgeTest(BridgeFixture):
     def test_first_and_second_subscriber_share_channel_and_no_history(self):
         self.ready()
         self.ready(2, 'bob')
@@ -344,7 +349,9 @@ class BridgeTest(unittest.TestCase):
             obj = json.loads(body)
             text = base64.b64decode(obj['content']['body']).decode()
             self.assertLessEqual(len(text.encode()), 48*1024)
-            self.assertIn('https://t.me/alexavni/11', text)
+            self.assertNotIn('Оригинал:', text)
+            self.assertNotIn('Telegram ·', text)
+            self.assertEqual('text/markdown; charset=utf-8', obj['content']['content_type'])
             ids.add(obj['client_message_id'])
         self.assertEqual(len(bodies), len(ids))
         self.bridge.telegram(100, *self.webhook(text=''))
@@ -360,13 +367,13 @@ class BridgeTest(unittest.TestCase):
         h, raw = self.webhook()
         h['x-webhook-timestamp'] = '1'
         self.assertEqual(401, self.bridge.telegram(100,h,raw))
-        self.bridge.telegram(100, *self.webhook(12,event='event-12'))
-        self.bridge.telegram(100, *self.webhook(11,event='event-11'))
+        self.bridge.telegram(100, *self.webhook(12,text='Post 12',event='event-12'))
+        self.bridge.telegram(100, *self.webhook(11,text='Post 11',event='event-11'))
         self.bridge.tick()
         self.bridge.tick()
         sent = list(self.kobby.sent.values())
         self.assertEqual(2, len(sent))
-        self.assertIn('/11', base64.b64decode(sent[0]['content']['body']).decode())
+        self.assertEqual('Post 11', base64.b64decode(sent[0]['content']['body']).decode())
 
     def test_encryption_and_database_binding(self):
         self.ready()

@@ -48,9 +48,19 @@ Passwords belonging to subscribing users are never requested.
 
 - Public Telegram broadcast channels only; new sources start after their saved
   initial message boundary. Existing history is not imported.
-- Text/captions and an original-post link are copied as plain text. Media and
-  albums are not downloaded. A media-only post produces a readable link entry.
-- Long text is split into parts of at most 48 KiB UTF-8, including attribution.
+- Text/captions are published as Markdown, preserving Telegram bold, italic,
+  strikethrough, code, quotes, and HTTP(S) text links. Unsupported formatting
+  remains readable text. No generated source heading or original-post footer is added.
+- Photos come from public `t.me` post previews and are cached by this bridge.
+  No additional Telegram session or watcher changes are required. Album members
+  remain separate posts. Videos, documents, and link-preview thumbnails are not copied.
+- Kobby currently loads Markdown images only after the reader clicks **Load image**.
+  Cached photos expire three days after publication, with hourly cleanup and a
+  1 GiB total cache cap. Pending publications retain their photos. Old post text
+  remains readable after photo expiry; expired photo links return 404.
+- A missing/blocked public preview produces a short unavailable-photo notice;
+  the caption is retained. Preview HTML/CDN changes may require adapter updates.
+- Long text is split into independently formatted parts of at most 48 KiB UTF-8.
 - Edits and deletions are not synchronized after a post has been accepted here.
 - Prepared API requests and their IDs survive restarts and lost HTTP responses.
 - A second subscriber or credential rotation reuses the same mirror.
@@ -66,6 +76,13 @@ not events already discarded upstream. Complete recovery requires a separate
 watcher enhancement with retained delivery payloads and history pagination.
 Arrival order upstream is not guaranteed; queued parts are sent in message-ID
 order among the currently known unfinished posts.
+
+Photo downloads are sequential and spaced by at least two seconds. HTTP 429
+pauses preview traffic across restarts using `Retry-After`. Transient errors get
+three attempts; persistent failures fall back to text. Telegram account and
+Kobby credentials are never sent to public preview/CDN hosts. This avoids extra
+MTProto account activity for photos, but does not guarantee freedom from Telegram
+rate limits or restrictions.
 
 ## Local setup
 
