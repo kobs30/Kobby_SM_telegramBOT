@@ -233,7 +233,8 @@ class Bridge:
         try:
             images = self.previews.prepare(source, message)
             if not images:
-                error_code = 'preview_photo_unavailable'
+                # Telegram's web preview can lag behind its message update.
+                raise APIError(503, 'preview_photo_unavailable')
         except APIError as error:
             if error.status == 429 or (error.status >= 500 and job['attempts'] < 2):
                 self.store.execute('UPDATE preparations SET attempts=attempts+1,next_at=?,error=? '

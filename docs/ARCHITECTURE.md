@@ -127,7 +127,9 @@ publication. Once expired, photos return 404 while Markdown text remains stored
 in Kobby. A full cache produces text fallback without deleting protected photos.
 
 HTTP 429 persists a global preview cooldown and respects `Retry-After`; network
-and server errors receive up to three attempts before text fallback. Watcher
+and server errors receive up to three attempts before text fallback. A preview
+without the expected photo also receives three attempts because public HTML can
+lag behind a fresh Telegram update. Watcher
 code, credentials and Telegram sessions are not changed or shared with this
 adapter. Public preview availability and HTML stability are external limitations.
 

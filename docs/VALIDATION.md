@@ -100,3 +100,18 @@ Live acceptance can pass `--image-url https://<BRIDGE_SERVER>/media/<digest>.jpg
 to verify image fetching, CORS, and a Markdown publication containing that image
 in its isolated disposable channel. Kobby's existing client requires an explicit
 click to load Markdown images; the bridge does not change that client behavior.
+
+Live deployment checks passed on the same date:
+
+- The bridge server downloaded that public photo without Telegram credentials
+  and served the cached JPEG over HTTPS with CORS.
+- A dedicated test account connected to the existing mirror and published
+  Markdown with the cached image in its own disposable channel. Repeating the
+  identical request deduplicated successfully. The test bot, membership and
+  disposable channel were cleaned up; no personal chats were used.
+- Health returned 200; the bridge used approximately 51 MiB of its 256 MiB memory
+  limit and the initial photo cache occupied 80 KiB. The server had 327 GiB free.
+- The Telegram watcher and all eight other containers retained their IDs and
+  start times. Only the bridge container was recreated.
+- A follow-up regression checks three attempts for previews that do not yet
+  contain a photo, before preserving the caption with an unavailable-photo notice.

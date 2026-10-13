@@ -166,6 +166,10 @@ class PhotoQueueTest(BridgeFixture):
         source = self.ready()
         self.bridge.ingest(source, {'id': 11, 'text': 'Caption', 'media': [{'type': 'photo'}]})
         with patch.object(self.bridge.previews, 'prepare', return_value=[]):
+            for _ in range(2):
+                self.bridge.tick()
+                self.assertEqual({}, self.kobby.sent)
+                self.make_due()
             self.bridge.tick()
         body = next(iter(self.kobby.sent.values()))
         text = base64.b64decode(body['content']['body']).decode()
