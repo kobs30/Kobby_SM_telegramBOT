@@ -67,3 +67,13 @@ Validated locally on 2026-10-13:
 
 The live acceptance script accepts repeatable `--extra-permission` arguments to
 exercise this behavior with a dedicated test account and no personal chat access.
+
+After deploying the update on the same date:
+
+- A dedicated test bot with all six current permissions completed automatic
+  connection and joined the existing `tlg_alexavni` mirror. No additional mirror
+  was created. The test bot and membership were removed afterward.
+- Publication and duplicate-request checks passed in a separate disposable
+  validation channel, which was then deleted.
+- Public HTTPS health returned 200. Only the bridge container was recreated;
+  all nine other containers retained their IDs and start timestamps.
