@@ -20,6 +20,8 @@ def main():
     parser.add_argument('--config', required=True)
     parser.add_argument('--test-data', required=True)
     parser.add_argument('--source', default='alexavni')
+    parser.add_argument('--extra-permission', action='append', default=[],
+                        help='Additional grant to test alongside communities.join; repeatable')
     args = parser.parse_args()
     config = load_config(args.config)
     api = API(config['kobby_base'])
@@ -31,7 +33,7 @@ def main():
     test.put_secret('test_bot_id', bot_id)
     payload = {'id': bot_id, 'name': 'Telegram bridge acceptance check',
                'url': config['public_base'] + '/t.me/' + args.source,
-               'chat_ids': [], 'permissions': ['communities.join'],
+               'chat_ids': [], 'permissions': list(dict.fromkeys(['communities.join', *args.extra_permission])),
                'enabled': True, 'allow_bots': False, 'auto_connect': True, 'all_personal_chats': False}
     try:
         publisher.request('POST', '/api/v1/bots', payload)

@@ -87,6 +87,9 @@ is fixed. It does not recreate unavailable mirrors or discard failed requests.
 
 An initial Kobby connection may briefly display 503 until its durable join job
 finishes. A missing `communities.join` permission requires changing bot settings.
+Additional permissions and chat access are accepted and do not cause HTTP 403.
+An **API only / no webhook** status requires enabling **Automatic connection**
+with the source URL and saving the bot; waiting alone does not start onboarding.
 Bot settings changes and rotation provide new credentials automatically.
 
 ## Backup, credentials and recovery

@@ -48,10 +48,13 @@ class Bridge:
             return 401
         try:
             event = json.loads(raw)
-            if (event['version'] != 1 or event['event'] != 'bot.connected'
+            if (event['version'] != 1
                     or not HEX64.fullmatch(event['event_id']) or not HEX32.fullmatch(event['bot_id'])
-                    or not HEX64.fullmatch(event['connection_code'])
                     or headers.get('x-kobby-event-id') != event['event_id']):
+                return 400
+            if event['event'] == 'message.created':
+                return self.ignore_kobby_message(username, event, headers, raw)
+            if event['event'] != 'bot.connected' or not HEX64.fullmatch(event['connection_code']):
                 return 400
         except (ValueError, KeyError, TypeError):
             return 400
@@ -73,8 +76,7 @@ class Bridge:
             for field in ('bot_id', 'owner_id', 'event_id', 'permissions', 'all_personal_chats', 'chat_ids'):
                 if credentials.get(field) != event.get(field):
                     return 401
-            if (set(credentials['permissions']) != {'communities.join'}
-                    or credentials['chat_ids'] or credentials['all_personal_chats']):
+            if 'communities.join' not in credentials['permissions']:
                 return 403
             # Check current credentials before allowing an old signed connection
             # event to overwrite a later rotation or source change.
@@ -106,6 +108,18 @@ class Bridge:
             return 400
         finally:
             self.work_lock.release()
+
+    def ignore_kobby_message(self, username, event, headers, raw):
+        # Extra chat access can produce message webhooks. Authenticate and discard
+        # them without storing their contents or calling any chat API.
+        row = self.store.one('SELECT * FROM connections WHERE bot_id=?', (event['bot_id'],))
+        if not row or row['username'] != username or row['owner_id'] != event.get('owner_id'):
+            return 401
+        credentials = self.store.unseal(row['credentials'])
+        expected = signature(credentials['webhook_secret'], headers['x-kobby-timestamp'], raw)
+        if not hmac.compare_digest(expected, headers.get('x-kobby-signature', '')):
+            return 401
+        return 204 if row['state'] == 'joined' else 503
 
     def watcher_request(self, method, path, body=None):
         key = self.store.secret('watcher_key')
@@ -173,8 +187,7 @@ class Bridge:
         me = self.kobby.request('GET', '/api/v1/bot/me', token=credentials['api_token'])
         if me.get('owner_id') != row['owner_id'] or me.get('bot_id') != row['bot_id']:
             raise APIError(403, 'connection_identity_mismatch')
-        if (set(me.get('permissions', [])) != {'communities.join'}
-                or me.get('chat_ids') or me.get('all_personal_chats')):
+        if 'communities.join' not in me.get('permissions', []):
             raise APIError(403, 'bot_permission_required')
         source = self.source_for(row)
         self.ensure_source(source)

@@ -5,7 +5,8 @@
 Offline tests exercise first and second subscriptions, concurrent first requests,
 credential rotation, stale events, lost channel-create responses, lost publication
 responses, restart with pending work, edited retry payloads, unavailable sources,
-publisher session renewal/failure, revoked join permission, deleted mirrors,
+publisher session renewal/failure, missing/revoked join permission, additional
+permissions and chat scopes, authenticated discard of chat webhooks, deleted mirrors,
 Unicode splitting, media-only posts, HMAC checks, out-of-order intake, encrypted
 secrets, origin binding, and HTTP routing.
 
@@ -23,8 +24,9 @@ event-loop sockets; no external API access is used by these tests.
 
 Validated on 2026-10-13:
 
-- 18 offline tests passed, including registration response loss, foreign-name
-  collision, disabled registration, and rejection of broader-than-needed grants.
+- The initial 18 offline tests passed, including registration response loss,
+  foreign-name collision, disabled registration, and the original restrictive
+  permission policy (superseded by the compatibility update below).
 - The real publisher account `tlg_bridge` was created and its credentials stored
   encrypted, with the encryption key outside the database mount.
 - The isolated Compose project `kobby-telegram-bot` runs on `164.68.127.58`.
@@ -48,3 +50,20 @@ event intake, recovery and formatting are covered by signed fixtures in the
 offline suite; these checks do not claim an observed new live Telegram post.
 Upstream five-post retention prevents a guarantee of complete catch-up after a
 long outage, regardless of these successful tests.
+
+## Additional-permission compatibility update
+
+Validated locally on 2026-10-13:
+
+- All 21 offline tests passed.
+- Connections with all current Kobby permissions, selected chats, or all-personal
+  chat access share the same mirror and complete successfully.
+- Missing or revoked `communities.join` still prevents joining, even when other
+  permissions remain. Signed identity and scope mismatches remain rejected.
+- Extra message webhooks are authenticated and discarded without database writes
+  or chat API calls; invalid signatures, owners, bots, paths, and timestamps fail.
+- Test publication still uses the publisher user session. Subscriber tokens only
+  call `/bot/me` and `/bot/communities/join` after the connection exchange.
+
+The live acceptance script accepts repeatable `--extra-permission` arguments to
+exercise this behavior with a dedicated test account and no personal chat access.

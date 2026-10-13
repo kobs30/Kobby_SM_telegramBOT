@@ -22,13 +22,21 @@ database. Back up and restrict access to both the database and the key.
 
 ## Trusted connection exchange
 
-`POST /t.me/{username}` accepts only Kobby `bot.connected` events. The service
+`POST /t.me/{username}` starts onboarding for Kobby `bot.connected` events. The service
 checks timestamp, structural identifiers, and event/header consistency, persists
 an `exchange_id`, and calls `/api/v1/bot/connect` on the configured origin.
 Credentials from that exchange authenticate the original raw webhook via HMAC.
 Owner, bot, event, permissions, chat scope, and `/bot/me` must agree before any
 business action. Neither a URL path nor an unverified owner field grants admin
 authority. API clients reject redirects and do not use environment proxies.
+
+`communities.join` must be present at connection and join time. Additional
+permissions, selected chats, and access to all personal chats do not prevent
+connection. Subscriber tokens are used only for identity checks and joining.
+Incoming `message.created` webhooks are checked against the stored bot, owner,
+source path, timestamp, and HMAC, then acknowledged without saving their contents
+or making chat API calls. This prevents unused chat access from causing delivery
+errors. Unknown event types remain unsupported.
 
 The business job persists its progress. The handler returns a retryable response
 until the worker confirms Kobby membership, then acknowledges the webhook. This

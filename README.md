@@ -19,8 +19,8 @@ Production example: [connect alexavni](https://tlg-bridge.164-68-127-58.sslip.io
 1. Open **Settings → Add bot**.
 2. Enter the source-specific webhook URL above.
 3. Enable **Automatic connection** and the **Join communities** permission
-   (`communities.join`). Leave other permissions and personal-chat access disabled;
-   this service rejects broader grants.
+   (`communities.join`). Additional permissions and selected chats are accepted;
+   the service uses only the join permission and ignores chat message webhooks.
 4. Save and refresh the bot list. **Service connected** is acknowledged after
    the source has been checked, the mirror prepared, and your membership confirmed.
 5. Read new posts in the public `tlg_<Telegram username>` channel.
@@ -29,6 +29,8 @@ Opening the URL in a browser displays instructions and the shared source status.
 It does not subscribe anyone. A connection may initially show HTTP 503 while the
 durable background job runs; Kobby retries automatically. Missing permissions or
 an unavailable source never receive a successful connection acknowledgment.
+If Kobby shows **API only / no webhook**, edit the bot, enable **Automatic
+connection**, and save. Manual credential export does not connect this service.
 
 ## Authorization
 

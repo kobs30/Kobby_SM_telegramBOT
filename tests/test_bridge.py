@@ -117,10 +117,12 @@ class BridgeTest(unittest.TestCase):
         self.store.close()
         self.tmp.cleanup()
 
-    def event(self, number=1, owner='alice', bot_number=None):
+    def event(self, number=1, owner='alice', bot_number=None, *, permissions=None,
+              chat_ids=None, all_personal_chats=False):
         eid, bid = f'{number:064x}', f'{bot_number or number:032x}'
         credential = {'event_id': eid, 'bot_id': bid, 'owner_id': owner,
-                      'permissions': ['communities.join'], 'chat_ids': [], 'all_personal_chats': False,
+                      'permissions': ['communities.join'] if permissions is None else permissions,
+                      'chat_ids': [] if chat_ids is None else chat_ids, 'all_personal_chats': all_personal_chats,
                       'api_token': f'bot-token-{number}', 'webhook_secret': 's'*40}
         self.kobby.credentials[eid] = credential
         event = {k:v for k,v in credential.items() if k not in ('api_token','webhook_secret')}
@@ -250,20 +252,79 @@ class BridgeTest(unittest.TestCase):
 
     def test_revoked_join_permission_stops_business_actions(self):
         self.bridge.connect('alexavni', *self.event())
-        self.kobby.credentials[f'{1:064x}']['permissions'] = []
+        self.kobby.credentials[f'{1:064x}']['permissions'] = ['channels.create']
         self.bridge.tick()
         self.assertEqual({}, self.kobby.channels)
         self.assertEqual('bot_permission_required', self.store.one('SELECT * FROM connections')['error'])
 
-    def test_personal_chat_access_is_rejected_at_connection(self):
-        headers, raw = self.event()
-        event = json.loads(raw)
-        event['all_personal_chats'] = True
-        self.kobby.credentials[event['event_id']]['all_personal_chats'] = True
-        raw = json.dumps(event).encode()
-        headers['x-kobby-signature'] = signature('s'*40, headers['x-kobby-timestamp'], raw)
-        self.assertEqual(403, self.bridge.connect('alexavni', headers, raw))
+    def test_extra_permissions_and_chat_access_do_not_prevent_connection(self):
+        grants = ['communities.join', 'contacts.create', 'chats.create', 'groups.create',
+                  'channels.create', 'audio.read']
+        scopes = [{}, {'chat_ids': ['test-chat']}, {'all_personal_chats': True}]
+        for number, scope in enumerate(scopes, 1):
+            with self.subTest(scope=scope):
+                event = self.event(number, f'test-user-{number}', permissions=grants, **scope)
+                self.assertEqual(503, self.bridge.connect('alexavni', *event))
+                self.bridge.tick()
+                self.assertEqual(204, self.bridge.connect('alexavni', *event))
+        self.assertEqual(1, len(self.kobby.channels))
+        self.assertEqual(3, len(self.kobby.joins))
+        self.bridge.telegram(100, *self.webhook())
+        self.bridge.tick()
+        self.assertEqual(1, len(self.kobby.sent))
+        for _, path, _, token in self.kobby.requests:
+            if token and token.startswith('bot-token-'):
+                self.assertIn(path, ('/api/v1/bot/me', '/api/v1/bot/communities/join'))
+            elif path == '/api/v1/messages':
+                self.assertEqual('user-token', token)
+
+    def test_missing_join_permission_is_rejected_even_with_extra_permissions(self):
+        for number, permissions in enumerate(([], ['contacts.create', 'channels.create']), 1):
+            event = self.event(number, permissions=permissions, all_personal_chats=True)
+            self.assertEqual(403, self.bridge.connect('alexavni', *event))
         self.assertEqual([], self.store.rows('SELECT * FROM connections'))
+        self.assertEqual({}, self.kobby.channels)
+        self.assertEqual(set(), self.kobby.joins)
+
+    def test_extra_permissions_still_require_matching_signed_identity_and_scope(self):
+        for number, field, value in ((1, 'owner_id', 'someone-else'),
+                                     (2, 'permissions', ['communities.join']),
+                                     (3, 'chat_ids', []), (4, 'all_personal_chats', False)):
+            with self.subTest(field=field):
+                headers, raw = self.event(number, permissions=['communities.join', 'contacts.create'],
+                                          chat_ids=['test-chat'], all_personal_chats=True)
+                # The signed payload and exchanged credentials must still agree.
+                self.kobby.credentials[f'{number:064x}'][field] = value
+                self.assertEqual(401, self.bridge.connect('alexavni', headers, raw))
+        self.assertEqual([], self.store.rows('SELECT * FROM connections'))
+
+    def test_message_webhooks_are_authenticated_and_discarded(self):
+        self.ready()
+        stamp = str(int(time.time()))
+        event = {'version': 1, 'event': 'message.created', 'event_id': 'f'*64,
+                 'bot_id': f'{1:032x}', 'owner_id': 'alice', 'chat_id': 'test-chat',
+                 'text': 'Synthetic message that must not be stored'}
+
+        def send(payload, username='alexavni', secret='s'*40, timestamp=stamp):
+            raw = json.dumps(payload).encode()
+            headers = {'x-kobby-timestamp': timestamp, 'x-kobby-event-id': payload['event_id'],
+                       'x-kobby-signature': signature(secret, timestamp, raw)}
+            return self.bridge.connect(username, headers, raw)
+
+        requests = len(self.kobby.requests)
+        changes = self.store.db.total_changes
+        self.assertEqual(204, send(event))
+        self.assertEqual(204, send(event))
+        self.assertEqual(401, send(event, secret='wrong-secret'))
+        self.assertEqual(401, send(event, username='otherchannel'))
+        self.assertEqual(401, send(event, timestamp='1'))
+        self.assertEqual(401, send(dict(event, owner_id='someone-else')))
+        self.assertEqual(401, send(dict(event, bot_id=f'{2:032x}')))
+        self.assertEqual(400, send(dict(event, event='unsupported.event')))
+        self.assertEqual(changes, self.store.db.total_changes)
+        self.assertEqual(requests, len(self.kobby.requests))
+        self.assertEqual([], self.store.rows('SELECT * FROM posts'))
+        self.assertEqual([], self.store.rows('SELECT * FROM outbox'))
 
     def test_missing_or_deleted_mirror_is_not_recreated(self):
         self.ready()
